@@ -1,19 +1,28 @@
 -module(saving).
--export([create_folder/1, save_into_file/3]).
+-export([create_folder/2, save_into_file/4]).
 
-create_folder(DirName) ->
+create_folder(DirName, Silent) ->
     % NameInArray = io:format("~s", [DirName]),
     % NameInString = lists:flatten(NameInArray),
 
     case file:make_dir(DirName) of
         ok ->
-            
-            io:format("Directory ~s create~n", [DirName]);
+            if
+                not Silent ->
+                    io:format("Directory ~s create~n", [DirName]);
+                true ->
+                    skip
+            end;
         {error, Reason} ->
-            io:format("Failed to create directory ~s. Reason: ~p~n", [DirName, Reason])
+            if
+                not Silent ->
+                    io:format("Failed to create directory ~s. Reason: ~p~n", [DirName, Reason]);
+                true ->
+                    skip
+            end
     end.
 
-save_into_file(DirName, FileName, Content) ->
+save_into_file(DirName, FileName, Content, Silent) ->
     PathInArray = io_lib:format("~s~s", [DirName, FileName]),
     PathInString = lists:flatten(PathInArray),
 
@@ -21,7 +30,17 @@ save_into_file(DirName, FileName, Content) ->
         {ok, File} ->
             file:write(File, Content),
             file:close(File),
-            io:format("Content written into ~s~n", [PathInString]);
+            if
+                not Silent ->
+                    io:format("Content written into ~s~n", [PathInString]);
+                true ->
+                    skip
+            end;
         {error, Reason} ->
-            io:format("Failed to write content into ~s : ~p~n", [PathInString, Reason])
+            if
+                not Silent ->
+                    io:format("Failed to write content into ~s : ~p~n", [PathInString, Reason]);
+                true ->
+                    skip
+            end    
     end.
