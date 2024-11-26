@@ -6,8 +6,6 @@
 -export([launch/1, launch/4, loop/4, speak_all/1, reliable_speak_all/1, create_ring/1]).
 
 loop(Id, Successor, Predecessor, Keys) ->
-    Pid = self(),
-
     receive
         {speak} ->
             case {Successor, Predecessor} of
