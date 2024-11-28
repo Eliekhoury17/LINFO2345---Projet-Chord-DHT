@@ -4,7 +4,7 @@
 -import(hashing, [run/2, hash_key/1, read_keys/2, hash_keys/2]).
 -import(saving, [create_folder/1, save_into_file/3]).
 -record(node, {id, successor, predecessor, keys = []}).
--export([launch/1, launch/6, init/6, init/7, loop/7, speak_all/1, reliable_speak_all/1, create_ring/1]).
+-export([launch/1, launch/6, init/6, init/7, loop/7, speak_all/1, reliable_speak_all/1, create_ring/1, compute_finger_table/3]).
 
 loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
     receive
@@ -31,91 +31,21 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
         {delKey, Key} ->
             loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
         {findRange, Key} ->
-            FoundNode = maps:fold(fun (NodeKey, NodePid, Acc) ->
-                if
-                    Key > NodeKey ->
-                        Acc;
-                    true ->
-                        Dist = NodeKey - Key,
-
-                        case Acc of
-                            none ->
-                                {Dist, NodeKey, NodePid};
-                            {BestDist, _, _} ->
+            case maps:fold(fun (Idx, {Start, NodePid}, Acc) ->
                                 if
-                                    Dist < BestDist ->
-                                        {Dist, NodeKey, NodePid};
-                                    true ->
-                                        Acc
+                                    Key >= Start -> {Idx, {Start, NodePid}};
+                                    true -> Acc
                                 end
-                        end
-                end
-            end, none, FingerTable),
-
-            case FoundNode of
+                            end, none, FingerTable) of
                 none ->
                     case Successor of
                         {_, _, SuccessorPid} ->
-                            SuccessorPid ! {discover, Key, self()}
+                            SuccessorPid ! {findRange, Key}
                     end;
-                {_, NodeKey, NodePid} ->
+                {_, {_, NodePid}} ->
                     NodePid ! {findRange, Key}
             end,
-
-            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-        {discover, Key, AskerPid} ->
-            case {Predecessor, Successor} of
-                {{_, PredecessorId, _}, {_, _, SuccessorPid}} ->
-                    if
-                        (Key >= PredecessorId andalso Key < Id) orelse (Id < PredecessorId andalso (Key >= PredecessorId orelse Key < Id)) ->
-                            case maps:is_key(Key, Map) of
-                                true ->
-                                    AskerPid ! {itsme, Id, self()},
-                                    loop(Index, Id, Successor, Predecessor, maps:remove(Key, Map), DirName, FingerTable)
-                            end
-                    end,
-                    SuccessorPid ! {discover, Key, AskerPid},
-                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-            end,
-            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-        {addKeyNaive, Key, Value} ->
-            case {Predecessor, Successor} of
-                {{_, PredecessorId, _}, {_, _, SuccessorPid}} ->
-                    if
-                        Key >= PredecessorId, Key < Id ->
-                            loop(Index, Id, Successor, Predecessor, maps:put(Key, Value, Map), DirName, FingerTable);
-                        Id < PredecessorId, Key >= PredecessorId orelse Key < Id ->
-                            loop(Index, Id, Successor, Predecessor, maps:put(Key, Value, Map), DirName, FingerTable);
-                        true ->
-                            SuccessorPid ! {addKey, Key, Value},
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                    end
-            end;
-        {getKeyNaive, Key} ->
-            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-        {delKeyNaive, Key} ->
-            case {Predecessor, Successor} of
-                {{_, PredecessorId, _}, {_, _, SuccessorPid}} ->
-                    if
-                        Key >= PredecessorId, Key < Id ->
-                            case maps:is_key(Key, Map) of
-                                true ->
-                                    loop(Index, Id, Successor, Predecessor, maps:remove(Key, Map), DirName, FingerTable);
-                                false ->
-                                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                            end;
-                        Id < PredecessorId, Key >= PredecessorId orelse Key < Id ->
-                            case maps:is_key(Key, Map) of
-                                true ->
-                                    loop(Index, Id, Successor, Predecessor, maps:remove(Key, Map), DirName, FingerTable);
-                                false ->
-                                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                            end;
-                        true ->
-                            SuccessorPid ! {delKey, Key},
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                    end
-            end;
+            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);       
         {findRangeNaive, Key} ->
             case {Predecessor, Successor} of
                 {{_, PredecessorId, _}, {_, _, SuccessorPid}} ->
@@ -135,8 +65,12 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
         {predecessor, NewPredecessor} ->
             io:format("New predecessor for ~w (~p) ~p~n", [Id, self(), NewPredecessor]),
             loop(Index, Id, Successor, NewPredecessor, Map, DirName, FingerTable);
+        {printFingerTable} ->
+            io:format("Received printFingerTable message~n"),
+            io:format("Finger table for node ~w: ~p~n", [Id, FingerTable]),
+            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
         _ ->
-            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
+        loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
     after 1000 ->
         FileNameInArray = io_lib:format("~p.csv", [Index]),
         FileNameInString = lists:flatten(FileNameInArray),
@@ -162,9 +96,14 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
     end.
 
 init(Index, Id, Successor, Predecessor, Keys, DirName, Map) ->
+    N = 4,
+    M = 6,
+    RawIds = lists:seq(0, N - 1),
+    SortedIds = lists:sort(lists:map(fun hashing:hash_key/1, RawIds)),
+    FingerTable = compute_finger_table(Id, SortedIds, M),
     case Keys of
         [] ->
-            loop(Index, Id, {Id, self()}, {Id, self()}, Map, DirName, #{});
+            loop(Index, Id, {Id, self()}, {Id, self()}, Map, DirName, FingerTable);
         [Key | Tail] ->
             init(Index, Id, Successor, Predecessor, Tail, DirName, maps:put(Key, default, Map))
     end.
@@ -214,16 +153,28 @@ launch(Index, NodesList, Pids, First, Predecessor, DirName) ->
 
 -spec create_ring(list(integer())) -> list(#node{}).
 create_ring(NodeIds) ->
+    M = 6,
     SortedIds = lists:sort(lists:map(fun hashing:hash_key/1, NodeIds)),
-    AllKeys = lists:sort(hashing:hash_keys("keys.csv", 65000)),
+    AllKeys = lists:sort(hashing:hash_keys("keys.csv", round(math:pow(2, M)))),
     Len = length(SortedIds),
-    lists:map(fun(Index) ->
+    Nodes = lists:map(fun(Index) ->
         Id = lists:nth(Index, SortedIds),
         PredIndex = (Index - 2 + Len) rem Len + 1,
         PredecessorId = lists:nth(PredIndex, SortedIds),
         Keys = [KId || KId <- AllKeys, (KId > PredecessorId andalso KId < Id) orelse (Id < PredecessorId andalso (KId >= PredecessorId orelse KId < Id))],
         #node{id = Id, keys = Keys}
-    end, lists:seq(1, Len)).
+    end, lists:seq(1, Len)),
+    Nodes.
+
+compute_finger_table(Id, SortedIds, M) ->
+    lists:foldl(fun(I, Acc) ->
+        Start = (Id + round(math:pow(2, I - 1))) rem round(math:pow(2, M)),
+        case lists:dropwhile(fun(X) -> X < Start end, SortedIds) of
+            [] -> Acc;
+            [Succ | _] -> maps:put(I, {Start, Succ}, Acc)
+        end
+    end, #{}, lists:seq(1, M)).
+
 
 launch(N) ->
     DirNameInArray = io_lib:format("nth_~p/", [N]),
