@@ -167,11 +167,14 @@ create_ring(NodeIds) ->
     Nodes.
 
 compute_finger_table(Id, SortedIds, M) ->
+    % lists:foreach(fun(Pid) -> Pid ! {printFingerTable} end, Pids).
     lists:foldl(fun(I, Acc) ->
-        Start = (Id + round(math:pow(2, I - 1))) rem round(math:pow(2, M)),
-        case lists:dropwhile(fun(X) -> X < Start end, SortedIds) of
-            [] -> Acc;
-            [Succ | _] -> maps:put(I, {Start, Succ}, Acc)
+        StartIndex = (Id + round(math:pow(2, I - 1))) rem length(SortedIds),
+        Successor = lists:nth(StartIndex + 1, SortedIds),
+        if Successor < Id -> 
+            maps:put(I, {}, Acc); % If the next entry to insert is less than the ID of the owner, stop adding
+        true -> 
+            maps:put(I, {StartIndex, Successor}, Acc)
         end
     end, #{}, lists:seq(1, M)).
 
