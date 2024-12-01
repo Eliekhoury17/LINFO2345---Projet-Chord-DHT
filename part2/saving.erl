@@ -1,5 +1,5 @@
 -module(saving).
--export([create_folder/2, save_into_file/4]).
+-export([create_folder/2, save_into_file/4, save_into_file/5]).
 
 create_folder(DirName, Silent) ->
     % NameInArray = io:format("~s", [DirName]),
@@ -22,11 +22,11 @@ create_folder(DirName, Silent) ->
             end
     end.
 
-save_into_file(DirName, FileName, Content, Silent) ->
+save_into_file(DirName, FileName, Content, Silent, Mode) ->
     PathInArray = io_lib:format("~s~s", [DirName, FileName]),
     PathInString = lists:flatten(PathInArray),
 
-    case file:open(PathInString, [write]) of
+    case file:open(PathInString, [Mode]) of
         {ok, File} ->
             file:write(File, Content),
             file:close(File),
@@ -44,3 +44,6 @@ save_into_file(DirName, FileName, Content, Silent) ->
                     skip
             end    
     end.
+
+save_into_file(DirName, FileName, Content, Silent) ->
+    save_into_file(DirName, FileName, Content, Silent, write).
