@@ -6,7 +6,7 @@
 -record(node, {index, id, keys = []}).
 
 % Ring launching functions
--export([launch/1, launch/2, test/0, test2/0, test3/0, test4/0]).
+-export([launch/1, launch/2, test/0, test2/0, test3/0, test4/0, test5/0]).
 % Print ring functions
 -export([speak_all/1, speak_finger_table_all/1, show_ring/1]).
 % Functions proper to a node/process
@@ -30,14 +30,6 @@ request_fingers(Index, Id, Successor, FingerTable) ->
     end.
 
 loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
-    case FingerTable of {_, _, FingerMap} ->
-        if
-            FingerMap == #{} ->
-                io:format("CLEAR[~p]:~p~n", [Index, FingerTable]);
-            true ->
-                skip
-        end
-    end,
     receive
         {speak} ->
             case {Predecessor, Successor} of
@@ -54,9 +46,11 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
 
             if
                 MyAge > Age ->
+                    io:format("Node[~w]: rejects whoisfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, CurrentDistance: ~w, Initiator: ~p)~n", [Index, Size, Age, OriginalDistance, CurrentDistance, Initiator]),
                     InitiatorPid ! {updateFingers, Size, Age, {Index, Id, self()}},
                     loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
                 MyAge < Age ->
+                    io:format("Node[~w]: accepts whoisfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, CurrentDistance: ~w, Initiator: ~p)~n====> + Update itself~n", [Index, Size, Age, OriginalDistance, CurrentDistance, Initiator]),
                     {_, _, SuccessorPid} = Successor,
                     
                     if
@@ -69,24 +63,28 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
                     self() ! {updateFingers, Size, Age, {Index, Id, self()}},
                     loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}});
                 MyAge == Age ->
-                    {_, _, SuccessorPid} = Successor,
-                    {BestPid, BestDistance} = maps:fold(
-                        fun (_, {_, Pid, Distance, _}, {BestPid, BestDistance}) ->
-                            if
-                                CurrentDistance >= Distance andalso Distance > BestDistance ->
-                                    {Pid, Distance};
-                                true ->
-                                    {BestPid, BestDistance}
-                            end
-                        end,
-                        {SuccessorPid, 1},
-                        FingerMap
-                    ),
-
+                    io:format("Node[~w]: accepts whoisfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, CurrentDistance: ~w, Initiator: ~p)~n", [Index, Size, Age, OriginalDistance, CurrentDistance, Initiator]),
                     if
                         CurrentDistance == 0 ->
-                            InitiatorPid ! {iamfinger, Size, Age, OriginalDistance, {Index, Id, self()}};
+                            io:format("PROUT ~n"),
+                            InitiatorPid ! {iamfinger, Size, Age, OriginalDistance, NumberOfHops + 1, {Index, Id, self()}};
                         true ->
+                            io:format("PAS PROUT ~n"),
+                            {_, _, SuccessorPid} = Successor,
+                    
+                            {BestPid, BestDistance} = maps:fold(
+                                fun (_, {_, Pid, Distance, _}, {BestPid, BestDistance}) ->
+                                    if
+                                        CurrentDistance >= Distance andalso Distance > BestDistance ->
+                                            {Pid, Distance};
+                                        true ->
+                                            {BestPid, BestDistance}
+                                    end
+                                end,
+                                {SuccessorPid, 1},
+                                FingerMap
+                            ),
+
                             BestPid ! {whoisfinger, Size, Age, OriginalDistance, CurrentDistance - BestDistance, NumberOfHops + 1, Initiator}
                     end,
 
@@ -97,34 +95,41 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
             {MySize, MyAge, FingerMap} = FingerTable,
 
             if
-                MyAge > Age -> loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
+                MyAge > Age ->
+                    io:format("Node[~w]: rejects iamfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, Initiator: ~p)~n", [Index, Size, Age, OriginalDistance, Initiator]),
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
                 MyAge < Age ->
+                    io:format("Node[~w]: rejects iamfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, Initiator: ~p)~n====> + Update itself~n", [Index, Size, Age, OriginalDistance, Initiator]),
                     self() ! {updateFingers, Size, Age, {Index, Id, self()}},
                     loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}});
                 true ->
-                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, maps:put(InitiatorId, {InitiatorIndex, InitiatorPid, OriginalDistance, NumberOfHops})})
+                    io:format("Node[~w]: accepts iamfinger (Size: ~w, Age: ~w, OriginalDistance: ~w, Initiator: ~p)~n", [Index, Size, Age, OriginalDistance, Initiator]),
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, maps:put(InitiatorId, {InitiatorIndex, InitiatorPid, OriginalDistance, NumberOfHops}, FingerMap)})
             end;
-        {updateFingers, Size, Age, Initiator} ->
+        {updateFingers, Size, Age, Initiator} -> % self() ! {updateFingers, Size + 1, Age + 1, Successor}
+            io:format("Node[~w]: handles updateFingers (Size: ~w, Age: ~w, Initiator: ~p)~n", [Index, Size, Age, Initiator]),
             {MySize, MyAge, FingerMap} = FingerTable,
+            {_, _, InitiatorPid} = Initiator,
 
             if
-                MyAge < Age ->
+                MyAge =< Age ->
                     {_, _, SuccessorPid} = Successor,
                     lists:foreach(fun(I) ->
-                        Distance = math:pow(2, I), Size,
+                        Distance = trunc(math:pow(2, I)),
                         SuccessorPid ! {whoisfinger, Size, Age, Distance, Distance - 1, 0, {Index, Id, self()}}
                     end, lists:seq(0, trunc(math:log(Size) / math:log(2)) - 1));
                 true ->
-                    skip
+                    InitiatorPid ! {updateFingers, MySize, MyAge, {Index, Id, self()}},
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
             end,
 
-            {_, _, InitiatorPid} = Initiator,
             {_, _, PredecessorPid} = Predecessor,
 
+            MyPid = self(),
+
             case InitiatorPid of
-                self() -> skip;
-                none ->
-                    PredecessorPid ! {updateFingers, Size, Age, {Index, Id, self()}};
+                MyPid ->
+                    skip;
                 _ ->
                     PredecessorPid ! {updateFingers, Size, Age, Initiator}
             end,
@@ -135,6 +140,10 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
                 true ->
                     loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
             end;
+        {forceUpdateFingers} ->
+            {Size, Age, FingerMap} = FingerTable,
+            self() ! {updateFingers, Size, Age, Successor},
+            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
         {ring, Sender, Order} ->
             case Sender of {SenderIndex, _, _} ->
                 if
@@ -171,101 +180,94 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
             self() ! {startRing, successor},
             loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
         {findRangeInternal, ContactsList, SenderPid, Key, Action} ->
-            case {Predecessor, Successor} of
-                {{_, PredecessorId, PredecessorPid}, {_, _, SuccessorPid}} ->
-                    if
-                        (Key >= PredecessorId andalso Key < Id) orelse (Id < PredecessorId andalso (Key >= PredecessorId orelse Key < Id)) ->
-                            case Action of
-                                {add, Value, ThisSenderPid} ->
-                                    io:format("Node[~w]: Add key '~s' with value '~w'~n", [Index, lists:flatten(hashing:hash_to_hex(Key)), Value]),
+            {SuccessorIndex, SuccessorId, SuccessorPid} = Successor,
+            {PredecessorIndex, PredecessorId, PredecessorPid} = Predecessor,
+            {Size, Age, FingerMap} = FingerTable,
+            
+            if
+                (Key > PredecessorId andalso Key =< Id) orelse (Id < PredecessorId andalso (Key > PredecessorId orelse Key =< Id)) ->
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                    case Action of
+                        {add, Value, ThisSenderPid} ->
+                            io:format("Node[~w]: Add key '~s' with value '~w'~n", [Index, lists:flatten(hashing:hash_to_hex(Key)), Value]),
+                            ThisSenderPid ! {Index, Id, self(), ok},
+                            SenderPid ! {findRangeBilan, ContactsList ++ [Id], Key},
+                            loop(Index, Id, Successor, Predecessor, maps:put(Key, Value, Map), DirName, FingerTable);
+                        {del, ThisSenderPid} ->
+                            io:format("Node[~w]: Del key '~s'~n", [Index, lists:flatten(hashing:hash_to_hex(Key))]),
+                            SenderPid ! {findRangeBilan, ContactsList ++ [Id], Key},
+                            case maps:is_key(Key, Map) of
+                                true ->
                                     ThisSenderPid ! {Index, Id, self(), ok},
-                                    SenderPid ! {findRangeBilan, ContactsList, Key},
-                                    loop(Index, Id, Successor, Predecessor, maps:put(Key, Value, Map), DirName, FingerTable);
-                                {del, ThisSenderPid} ->
-                                    io:format("Node[~w]: Del key '~s'~n", [Index, lists:flatten(hashing:hash_to_hex(Key))]),
-                                    SenderPid ! {findRangeBilan, ContactsList, Key},
-                                    case maps:is_key(Key, Map) of
-                                        true ->
-                                            ThisSenderPid ! {Index, Id, self(), ok},
-                                            loop(Index, Id, Successor, Predecessor, maps:remove(Key, Map), DirName, FingerTable);
-                                        false ->
-                                            ThisSenderPid ! {Index, Id, self(), notfound},
-                                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                                    end;
-                                {get, ThisSenderPid} ->
-                                    io:format("Node[~w]: Get key '~s'~n", [Index, lists:flatten(hashing:hash_to_hex(Key))]),
-                                    ThisSenderPid ! {Index, Id, self(), maps:get(Key, Map, none)},
-                                    SenderPid ! {findRangeBilan, ContactsList, Key},
-                                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-                                {addNode, NewIndex, ThisSenderPid} ->
-                                    io:format("Node[~w]: Add node with index ~w and id '~s'~n", [Index, NewIndex, lists:flatten(hashing:hash_to_hex(Key))]),
-                                    case FingerTable of {Size, Age, _} ->
-                                        NewId = Key,
-                                        Keys = maps:keys(Map),
-                                        SortedKeys = lists:sort(Keys),
-                                        {OtherMap, NewMap} = lists:foldl(
-                                            fun (ThisKey, {OtherMap, NewMap}) ->
-                                                if
-                                                    ThisKey =< NewId ->
-                                                        {OtherMap, maps:put(
-                                                            ThisKey,
-                                                            maps:get(ThisKey, Map, default),
-                                                            NewMap
-                                                        )};
-                                                    true ->
-                                                        {maps:put(
-                                                            ThisKey,
-                                                            maps:get(ThisKey, Map, default),
-                                                            OtherMap
-                                                        ), NewMap}
-                                                end
-                                            end,
-                                            {#{}, #{}},
-                                            SortedKeys
-                                        ),
-                                        NewPid = spawn(?MODULE, loop, [NewIndex, NewId, {Index, Id, self()}, Predecessor, NewMap, DirName, {Size + 1, Age + 1, #{}}]),
-                                        PredecessorPid ! {successor, {NewIndex, NewId, NewPid}},
-                                        % self() ! {fullUpdateFingers},
-                                        ThisSenderPid ! {Index, Id, self(), {PredecessorPid, NewPid}},
-                                        % timer:sleep(500),
-                                        % self() ! {fullUpdateFingers, Age + 1, Size + 1},
-                                        loop(Index, Id, Successor, {NewIndex, NewId, NewPid}, OtherMap, DirName, FingerTable)
-                                    end;
-                                {prout} ->
-                                    io:format("PROUT~n");
-                                _ ->
-                                    io:format("Key '~s' found in range of node ~w (~p)~n", [lists:flatten(hashing:hash_to_hex(Key)), Index, Action])
+                                    loop(Index, Id, Successor, Predecessor, maps:remove(Key, Map), DirName, FingerTable);
+                                false ->
+                                    ThisSenderPid ! {Index, Id, self(), notfound},
+                                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
                             end;
-                        true ->
-                            case {Successor, FingerTable} of {{SuccessorIndex, SuccessorId, SuccessorPid}, {Size, Age, FingerMap}} ->
-                                BestNodeKey = maps:fold(
-                                    fun (NodeKey, Value, BestNodeKey) ->
-                                        case erlang:abs(NodeKey - Key) < erlang:abs(BestNodeKey - Key) of
-                                            %math:abs(NodeKey - Key) < math:abs(BestNodeKey - Key) -> %orelse BestNodeKey < Key) ->
-                                            true ->
-                                                NodeKey;
-                                            false ->
-                                                BestNodeKey
-                                        end
-                                    end,
-                                    SuccessorId,
-                                    FingerMap
-                                ),
-
-                                case maps:get(BestNodeKey, FingerMap, {SuccessorIndex, SuccessorPid, 1, none}) of {BestIndex, BestPid, BestDistance, _} ->
-                                    io:format("~w asks key to ~w at distance ~w~n", [Index, BestIndex, BestDistance]),
-                                    BestPid ! {findRangeInternal, [Id | ContactsList], SenderPid, Key, Action}
-                                    % if
-                                    %     BestPid == self() ->
-                                    %         io:format("ALECT : Node ~w has itself in its fingerTable. Then pass to successor ~w~n", [Index, SuccessorIndex]),
-                                    %         SuccessorPid ! {findRangeInternal, [Id | ContactsList], SenderPid, Key, Action};
-                                    %     true ->
-                                    %         BestPid ! {findRangeInternal, [Id | ContactsList], SenderPid, Key, Action}
-                                    % end
-                                end
+                        {get, ThisSenderPid} ->
+                            io:format("Node[~w]: Get key '~s'~n", [Index, lists:flatten(hashing:hash_to_hex(Key))]),
+                            ThisSenderPid ! {Index, Id, self(), maps:get(Key, Map, notfound)},
+                            SenderPid ! {findRangeBilan, ContactsList ++ [Id], Key},
+                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
+                        {addNode, NewIndex, ThisSenderPid} ->
+                            io:format("Node[~w]: Add node with index ~w and id '~s'~n", [Index, NewIndex, lists:flatten(hashing:hash_to_hex(Key))]),
+                            NewId = Key,
+                            Keys = maps:keys(Map),
+                            SortedKeys = lists:sort(Keys),
+                            {OtherMap, NewMap} = lists:foldl(
+                                fun (ThisKey, {OtherMap, NewMap}) ->
+                                    if
+                                        ThisKey =< NewId ->
+                                            {OtherMap, maps:put(
+                                                ThisKey,
+                                                maps:get(ThisKey, Map, default),
+                                                NewMap
+                                            )};
+                                        true ->
+                                            {maps:put(
+                                                ThisKey,
+                                                maps:get(ThisKey, Map, default),
+                                                OtherMap
+                                            ), NewMap}
+                                    end
+                                end,
+                                {#{}, #{}},
+                                SortedKeys
+                            ),
+                            NewPid = spawn(?MODULE, loop, [NewIndex, NewId, {Index, Id, self()}, Predecessor, NewMap, DirName, {Size + 1, Age + 1, #{}}]),
+                            PredecessorPid ! {successor, {NewIndex, NewId, NewPid}},
+                            % self() ! {fullUpdateFingers},
+                            % timer:sleep(500),
+                            % self() ! {fullUpdateFingers, Age + 1, Size + 1},
+                            self() ! {updateFingers, Size + 1, Age + 1, Successor},
+                            ThisSenderPid ! {Index, Id, self(), NewPid},
+                            loop(Index, Id, Successor, {NewIndex, NewId, NewPid}, OtherMap, DirName, FingerTable);
+                        _ ->
+                            io:format("Key '~s' found in range of node ~w (~p)~n", [lists:flatten(hashing:hash_to_hex(Key)), Index, Action])
+                    end;
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                true ->
+                    BestNodeKey = maps:fold(
+                        fun (NodeKey, Value, BestNodeKey) ->
+                            case erlang:abs(NodeKey - Key) < erlang:abs(BestNodeKey - Key) of
+                                %math:abs(NodeKey - Key) < math:abs(BestNodeKey - Key) -> %orelse BestNodeKey < Key) ->
+                                true ->
+                                    NodeKey;
+                                false ->
+                                    BestNodeKey
                             end
+                        end,
+                        SuccessorId,
+                        FingerMap
+                    ),
+
+                    case maps:get(BestNodeKey, FingerMap, {SuccessorIndex, SuccessorPid, 1, none}) of {BestIndex, BestPid, BestDistance, _} ->
+                        io:format("~w asks key to ~w at distance ~w~n", [Index, BestIndex, BestDistance]),
+                        %BestPid ! {findRangeInternal, [Id | ContactsList], SenderPid, Key, Action}
+                        BestPid ! {findRangeInternal, ContactsList ++ [Id], SenderPid, Key, Action}
                     end
             end,
+            
             loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
         {findRange, HashedKey, Action} ->
             self() ! {findRangeInternal, [], self(), erlang:list_to_integer(HashedKey, 16), Action},
@@ -424,18 +426,18 @@ launch(N, Debug) ->
                 {PredecessorIndex, PredecessorId, PredecessorPid} = {lists:nth(PredecessorI + 1, Indexs), lists:nth(PredecessorI + 1, Ids), lists:nth(PredecessorI + 1, Pids)},
                 {SuccessorIndex, SuccessorId, SuccessorPid} = {lists:nth(SuccessorI + 1, Indexs), lists:nth(SuccessorI + 1, Ids), lists:nth(SuccessorI + 1, Pids)},
                 Pid ! {predecessor, {PredecessorIndex, PredecessorId, PredecessorPid}},
-                Pid ! {successor, {SuccessorIndex, SuccessorId, SuccessorPid}},
+                Pid ! {successor, {SuccessorIndex, SuccessorId, SuccessorPid}}%,
 
-                FingerMap = lists:foldl(
-                    fun (Distance, Map) ->
-                        OtherI = (I + Distance + Length) rem Length,
-                        {OtherIndex, OtherId, OtherPid} = {lists:nth(OtherI + 1, Indexs), lists:nth(OtherI + 1, Ids), lists:nth(OtherI + 1, Pids)},
-                        maps:put(OtherId, {OtherIndex, OtherPid, Distance, 0}, Map)
-                    end,
-                    #{},
-                    Distances
-                ),
-                Pid ! {fingerTable, {N, 0, FingerMap}}
+                % FingerMap = lists:foldl(
+                %     fun (Distance, Map) ->
+                %         OtherI = (I + Distance + Length) rem Length,
+                %         {OtherIndex, OtherId, OtherPid} = {lists:nth(OtherI + 1, Indexs), lists:nth(OtherI + 1, Ids), lists:nth(OtherI + 1, Pids)},
+                %         maps:put(OtherId, {OtherIndex, OtherPid, Distance, 0}, Map)
+                %     end,
+                %     #{},
+                %     Distances
+                % ),
+                % Pid ! {fingerTable, {N, 0, FingerMap}}
             end
         end,
         lists:seq(0, erlang:length(RingList) - 1)
@@ -478,28 +480,16 @@ update_fingers_all(Pids) ->
     end.
 
 add_node(NewIndex, Pids) ->
-    NewId = hashing:hash_key(1024),
+    NewId = hashing:hash_key(NewIndex),
     Length = erlang:length(Pids),
     I = 1 + rand:uniform(Length - 1),
     Pid = lists:nth(I, Pids),
     HashedId = lists:flatten(hashing:hash_to_hex(NewId)),
     Pid ! {findRange, HashedId, {addNode, NewIndex, self()}},
     receive
-        {Index, _, _, {PredecessorPid, NewPid}} ->
-            io:format("Node[~w] has answered ok ~p~n", [Index, NewPid]),
-            NewPids = lists:foldl(
-                fun (Pid, NewPids) ->
-                    if
-                        Pid == PredecessorPid ->
-                            [Pid, NewPid] ++ NewPids;
-                        true ->
-                            [Pid] ++ NewPids
-                    end
-                end,
-                [],
-                Pids
-            ),
-            NewPids
+        {Index, _, _, NewPid} ->
+            io:format("Node[~w] has answered with value ~p~n", [Index, NewPid]),
+            Pids ++ [NewPid]
     after 5000 ->
         io:format("No responses....~n"),
         Pids
@@ -532,8 +522,8 @@ add_key(Key, Value, Pids) ->
     Pid = lists:nth(I, Pids),
     Pid ! {findRange, Key, {add, Value, self()}},
     receive
-        {Index, _, _, Value} ->
-            io:format("Node[~w] has answered with value ~p~n", [Index, Value]),
+        {Index, _, _, ThisValue} ->
+            io:format("Node[~w] has answered with value ~p~n", [Index, ThisValue]),
             Value
     after 5000 ->
         io:format("No responses....~n"),
@@ -635,3 +625,9 @@ test4() ->
     io:format("Old pids : ~p~n", [Pids]),
     io:format("New pids : ~p~n", [Pids2]),
     Pids2.
+
+test5() ->
+    Pids4 = main:launch(4, true),
+    lists:nth(1, Pids4) ! {forceUpdateFingers},
+    get_key("ab863e3b534d314", Pids4),
+    Pids4.
