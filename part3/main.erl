@@ -48,89 +48,92 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
         {whois, SenderPid} ->
             SenderPid ! {self(), Id},
             loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-        {whoisfinger, OriginalDistance, CurrentDistance, Size, Age, Sender, NumberOfHops} ->
-            case {Sender, Successor, FingerTable} of
-                {{SenderIndex, SenderId, SenderPid}, {SuccessorIndex, SuccessorId, SuccessorPid}, {ThisSize, ThisAge, ThisFingerMap}} ->
+        {whoisfinger, Size, Age, OriginalDistance, CurrentDistance, NumberOfHops, Initiator} ->
+            {_, _, InitiatorPid} = Initiator,
+            {MySize, MyAge, FingerMap} = FingerTable,
+
+            if
+                MyAge > Age ->
+                    InitiatorPid ! {updateFingers, Size, Age, {Index, Id, self()}},
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
+                MyAge < Age ->
+                    {_, _, SuccessorPid} = Successor,
+                    
                     if
                         CurrentDistance == 0 ->
-                            io:format("Node[~p]: answers iamfinger[~p:~p:~p] to ~p at distance ~p and remaining distance is ~p~n", [
-                                Index,
-                                SenderIndex,
-                                Age,
-                                OriginalDistance,
-                                SenderIndex,
-                                OriginalDistance,
-                                CurrentDistance
-                            ]),
-                            SenderPid ! {iamfinger, OriginalDistance, Size, Age, {Index, Id, self()}, NumberOfHops + 1},
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
-                        Age =< ThisAge ->
-                            {FoundOtherIndex, FoundOtherId, FoundOtherPid, FoundOtherDistance} = maps:fold(
-                                fun (OtherId, {OtherIndex, OtherPid, OtherDistance, _}, {FoundOtherIndex, FoundOtherId, FoundOtherPid, FoundOtherDistance}) ->
-                                    if
-                                        OtherDistance =< CurrentDistance andalso OtherDistance > FoundOtherDistance ->
-                                            {OtherIndex, OtherId, OtherPid, OtherDistance};
-                                        true ->
-                                            {FoundOtherIndex, FoundOtherId, FoundOtherPid, FoundOtherDistance}
-                                    end
-                                end,
-                                {SuccessorIndex, SuccessorId, SuccessorPid, 1},
-                                ThisFingerMap
-                            ),
-                            % io:format("Node[~p]: passes whoisfinger[~p:~p] to ~p at distance ~p and remaining distance is ~p~n", [
-                            %     Index,
-                            %     SenderIndex,
-                            %     OriginalDistance,
-                            %     FoundOtherIndex,
-                            %     OriginalDistance,
-                            %     CurrentDistance
-                            % ]),
-                            FoundOtherPid ! {whoisfinger, OriginalDistance, CurrentDistance - FoundOtherDistance, Size, Age, Sender, NumberOfHops + 1},
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
+                            InitiatorPid ! {iamfinger, Size, Age, OriginalDistance, {Index, Id, self()}};
                         true ->
-                            % io:format("Node[~p]: passes whoisfinger[~p:~p] to successor ~p at distance ~p and remaining distance is ~p~n", [
-                            %     Index,
-                            %     SenderIndex,
-                            %     OriginalDistance,
-                            %     SuccessorIndex,
-                            %     OriginalDistance,
-                            %     CurrentDistance
-                            % ]),
-                            SuccessorPid ! {whoisfinger, OriginalDistance, CurrentDistance - 1, Size, Age, Sender, NumberOfHops + 1},
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}})
-                    end
-            end;
-        {iamfinger, OriginalDistance, Size, Age, Sender, NumberOfHops} ->
-            case {Sender, FingerTable} of
-                {{SenderIndex, SenderId, SenderPid}, {ThisSize, ThisAge, ThisFingerMap}} ->
-                    if
-                        ThisAge == Age ->
-                            M = {ThisSize, ThisAge, maps:put(SenderId, {SenderIndex, SenderPid, OriginalDistance, NumberOfHops}, ThisFingerMap)},
-                            io:format("Node ~w has found finder ~w at distance ~p (Age: ~p, NumberOfHops: ~p)~nNewMap: ~p~n", [Index, SenderIndex, OriginalDistance, Age, NumberOfHops, M]),
-                            % io:format("~p~n", [maps:put(SenderId, {SenderIndex, SenderPid, OriginalDistance, NumberOfHops}, ThisFingerMap)]),
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, M);
-                        true ->
-                            io:format("Node ~w rejects finder ~w at distance ~p (ThisAge: ~p, Age: ~p, NumberOfHops: ~p)~n", [Index, SenderIndex, OriginalDistance, ThisAge, Age, NumberOfHops]),
-                            loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
-                    end
-            end;
-        {fullUpdateFingers, StopIndex, Age, Size} ->
-            % io:format("~n~nALERT %%%%%%%%%%%%%%%%%%%%% ~w vs ~w~n~n", [Index, StopIndex]),
-            case {Predecessor, FingerTable} of
-                {{PredecessorIndex, _, PredecessorPid}, {ThisSize, ThisAge, ThisFingerMap}} ->
-                    % io:format("Force node ~w to update fingers~n", [Index]),
-                    request_fingers(Index, Id, Successor, {Size, Age, #{}}),
+                            SuccessorPid ! {whoisfinger, Size, Age, OriginalDistance, CurrentDistance - 1, NumberOfHops + 1, Initiator}
+                    end,
+
+                    self() ! {updateFingers, Size, Age, {Index, Id, self()}},
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}});
+                MyAge == Age ->
+                    {_, _, SuccessorPid} = Successor,
+                    {BestPid, BestDistance} = maps:fold(
+                        fun (_, {_, Pid, Distance, _}, {BestPid, BestDistance}) ->
+                            if
+                                CurrentDistance >= Distance andalso Distance > BestDistance ->
+                                    {Pid, Distance};
+                                true ->
+                                    {BestPid, BestDistance}
+                            end
+                        end,
+                        {SuccessorPid, 1},
+                        FingerMap
+                    ),
 
                     if
-                        StopIndex == Index -> skip;
-                        true -> PredecessorPid ! {fullUpdateFingers, StopIndex, Age, Size}
+                        CurrentDistance == 0 ->
+                            InitiatorPid ! {iamfinger, Size, Age, OriginalDistance, {Index, Id, self()}};
+                        true ->
+                            BestPid ! {whoisfinger, Size, Age, OriginalDistance, CurrentDistance - BestDistance, NumberOfHops + 1, Initiator}
                     end,
-                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}})
+
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
             end;
-        {fullUpdateFingers, Age, Size} ->
-            case {Successor, Predecessor} of {{SuccessorIndex, _, _}, {_, _, PredecessorPid}} ->
-                PredecessorPid ! {fullUpdateFingers, Index, Age, Size},
-                loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
+        {iamfinger, Size, Age, OriginalDistance, NumberOfHops, Initiator} ->
+            {InitiatorIndex, InitiatorId, InitiatorPid} = Initiator,
+            {MySize, MyAge, FingerMap} = FingerTable,
+
+            if
+                MyAge > Age -> loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable);
+                MyAge < Age ->
+                    self() ! {updateFingers, Size, Age, {Index, Id, self()}},
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}});
+                true ->
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, maps:put(InitiatorId, {InitiatorIndex, InitiatorPid, OriginalDistance, NumberOfHops})})
+            end;
+        {updateFingers, Size, Age, Initiator} ->
+            {MySize, MyAge, FingerMap} = FingerTable,
+
+            if
+                MyAge < Age ->
+                    {_, _, SuccessorPid} = Successor,
+                    lists:foreach(fun(I) ->
+                        Distance = math:pow(2, I), Size,
+                        SuccessorPid ! {whoisfinger, Size, Age, Distance, Distance - 1, 0, {Index, Id, self()}}
+                    end, lists:seq(0, trunc(math:log(Size) / math:log(2)) - 1));
+                true ->
+                    skip
+            end,
+
+            {_, _, InitiatorPid} = Initiator,
+            {_, _, PredecessorPid} = Predecessor,
+
+            case InitiatorPid of
+                self() -> skip;
+                none ->
+                    PredecessorPid ! {updateFingers, Size, Age, {Index, Id, self()}};
+                _ ->
+                    PredecessorPid ! {updateFingers, Size, Age, Initiator}
+            end,
+
+            if
+                MyAge < Age ->
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, {Size, Age, #{}});
+                true ->
+                    loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable)
             end;
         {ring, Sender, Order} ->
             case Sender of {SenderIndex, _, _} ->
@@ -225,7 +228,7 @@ loop(Index, Id, Successor, Predecessor, Map, DirName, FingerTable) ->
                                         % self() ! {fullUpdateFingers},
                                         ThisSenderPid ! {Index, Id, self(), {PredecessorPid, NewPid}},
                                         % timer:sleep(500),
-                                        self() ! {fullUpdateFingers, Age + 1, Size + 1},
+                                        % self() ! {fullUpdateFingers, Age + 1, Size + 1},
                                         loop(Index, Id, Successor, {NewIndex, NewId, NewPid}, OtherMap, DirName, FingerTable)
                                     end;
                                 {prout} ->
