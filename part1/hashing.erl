@@ -6,8 +6,9 @@
 hash_key(Int) ->
     Bin = integer_to_binary(Int),
     Hash = crypto:hash(sha, Bin),
-    TruncatedHash = binary:part(Hash, 0, 8),
-    binary:decode_unsigned(TruncatedHash).
+    HashInt = binary:decode_unsigned(Hash),
+    TruncatedHash = HashInt rem (1 bsl 16),
+    TruncatedHash.
 
 hash_to_hex(HashInt) ->
     String = integer_to_list(HashInt, 16),
